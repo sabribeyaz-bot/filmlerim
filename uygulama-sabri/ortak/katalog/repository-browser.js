@@ -2,27 +2,41 @@
 /* Public GitHub repository discovery. Never trusts or installs a search result. */
 (function (root) {
   'use strict';
-  var NAME = 'filmmerkezi201-repository.json', API = 'https://api.github.com';
+  var NAME = 'filmmerkezi-repository.json', API = 'https://api.github.com';
   function message(tr, en) { return root.FilmI18n && root.FilmI18n.language() === 'en' ? en : tr; }
+  function httpsText(url, timeout, limit) {
+    var xhr = new root.XMLHttpRequest(), abort;
+    var promise = new Promise(function (resolve, reject) {
+      var done = false;
+      function finish(error, value) {
+        if (done) return;
+        done = true;
+        xhr.onload = xhr.onerror = xhr.ontimeout = xhr.onprogress = xhr.onabort = null;
+        if (error) reject(error); else resolve(value);
+      }
+      abort = function () { finish(new Error(message('Arama iptal edildi.', 'Search cancelled.'))); xhr.abort(); };
+      xhr.open('GET', url, true);
+      xhr.timeout = timeout;
+      xhr.onload = function () { finish(null, { status: xhr.status, body: xhr.responseText }); };
+      xhr.onerror = xhr.ontimeout = function () { finish(new Error(message('GitHub bağlantısı kurulamadı.', 'Could not connect to GitHub.'))); };
+      xhr.onabort = abort;
+      xhr.onprogress = function (e) { if (e.loaded > limit) abort(); };
+      xhr.send();
+    });
+    return { promise: promise, cancel: function () { if (abort) abort(); } };
+  }
+  function indexAddress(repo, path) {
+    if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo.fullName) || !/^[A-Za-z0-9_./-]{1,100}$/.test(repo.branch) || repo.branch.indexOf('..') >= 0) throw new Error('Invalid repository');
+    return root.FilmPluginSchema.address('https://raw.githubusercontent.com/' + repo.fullName + '/' + repo.branch + '/' + (path || NAME));
+  }
   function Search() { this.task = null; this.generation = 0; this.cache = {}; }
+  Search.httpsText = httpsText;
+  Search.indexAddress = indexAddress;
   Search.prototype.cancel = function () { this.generation++; if (this.task) this.task.cancel(); this.task = null; };
   Search.prototype.read = function (url, token) {
     var self = this, task;
     if (root.FilmNativeTLS && root.FilmNativeTLS.supported()) task = root.FilmNativeTLS.request(url, '', { timeoutMs: 15000, byteLimit: 262144 });
-    else {
-      var xhr = new root.XMLHttpRequest(), abort;
-      task = { promise: new Promise(function (resolve, reject) {
-        var done = false;
-        function finish(error, value) { if (done) return; done = true; xhr.onload = xhr.onerror = xhr.ontimeout = xhr.onprogress = xhr.onabort = null; if (error) reject(error); else resolve(value); }
-        abort = function () { finish(new Error(message('Arama iptal edildi.', 'Search cancelled.'))); xhr.abort(); };
-        xhr.open('GET', url, true); xhr.timeout = 15000;
-        xhr.onload = function () { finish(null, { status: xhr.status, body: xhr.responseText }); };
-        xhr.onerror = xhr.ontimeout = function () { finish(new Error(message('GitHub bağlantısı kurulamadı.', 'Could not connect to GitHub.'))); };
-        xhr.onabort = function () { finish(new Error(message('Arama iptal edildi.', 'Search cancelled.'))); };
-        xhr.onprogress = function (e) { if (e.loaded > 262144) abort(); };
-        xhr.send();
-      }), cancel: function () { if (abort) abort(); } };
-    }
+    else task = httpsText(url, 15000, 262144);
     this.task = task;
     return task.promise.then(function (r) {
       if (token !== self.generation) throw new Error(message('Arama iptal edildi.', 'Search cancelled.'));
@@ -48,14 +62,14 @@
   Search.prototype.address = function (repo) {
     this.cancel();
     var token = this.generation;
-    if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo.fullName) || !/^[A-Za-z0-9_./-]{1,100}$/.test(repo.branch) || repo.branch.indexOf('..') >= 0) return Promise.reject(new Error('Invalid repository'));
+    try { indexAddress(repo); } catch (error) { return Promise.reject(error); }
     return this.read(API + '/repos/' + repo.fullName + '/readme?ref=' + encodeURIComponent(repo.branch), token).then(function (data) {
       var text = '', path = NAME, marker;
       if (data && data.encoding === 'base64' && typeof data.content === 'string' && data.content.length < 180000) text = root.atob(data.content.replace(/\s/g, ''));
-      marker = /<!--\s*film-merkezi201-repository:\s*([A-Za-z0-9_./-]+)\s*-->/.exec(text);
+      marker = /<!--\s*film-merkezi-repository:\s*([A-Za-z0-9_./-]+)\s*-->/.exec(text);
       if (marker) path = marker[1];
-      if (path.indexOf('..') >= 0 || path.charAt(0) === '/' || !/(^|\/)filmmerkezi201-repository\.json$/.test(path)) throw new Error(message('README depo adresi geçersiz.', 'Invalid repository address in README.'));
-      return root.FilmPluginSchema.address('https://raw.githubusercontent.com/' + repo.fullName + '/' + repo.branch + '/' + path);
+      if (path.indexOf('..') >= 0 || path.charAt(0) === '/' || !/(^|\/)filmmerkezi-repository\.json$/.test(path)) throw new Error(message('README depo adresi geçersiz.', 'Invalid repository address in README.'));
+      return indexAddress(repo, path);
     });
   };
   root.FilmRepositorySearch = Search;
@@ -82,46 +96,11 @@
     if (manager.errorReport && root.FilmErrorReporter) box.appendChild(root.FilmErrorReporter.button(manager.errorReport, 'plugins-report-error'));
     if (panel.working || manager.busy) { line(t('İşlem sürüyor…', 'Working…')); button(t('İndirmeyi iptal et', 'Cancel transfer'), 'plugins-cancel-work', function () { manager.cancel(); }); return; }
     if (manager.blocked) { line(t('Eklenti kaydı korunuyor; bu oturumda değiştirilemez.', 'Plugin records are preserved and read-only in this session.')); if (panel.onboarding) button(t('Şimdilik atla', 'Skip for now'), 'plugins-setup-done', function () { root.FilmRepositorySetup.complete(catalog); }); return; }
-    if (view === 'repositories') {
-      line(t('Kendi GitHub veya HTTPS eklenti deponuzu ekleyin.', 'Add your own GitHub or HTTPS plugin repository.'));
-      button(t('GitHub’da depo ara', 'Find repositories on GitHub'), 'plugins-find', function () { panel.searchOrigin = false; panel.searchText = ''; panel.searchMode = 'repository'; panel.pluginView = 'find'; work(function () { return manager.search.search('', 'repository', 1).then(function (r) { panel.searchResults = r; }); }, 'find', 'plugins-search-run'); }, !!manager.search);
-      button(t('+ Adresle depo ekle', '+ Add repository by address'), 'plugins-add-repository', function () { panel.searchOrigin = false; panel.url = ''; panel.replaceId = ''; show('address', 'plugins-url-edit'); });
-      button(t('Kurulu eklentiler', 'Installed plugins'), 'plugins-installed', function () { show('installed'); });
-      Object.keys(manager.state.repositories).forEach(function (id) { var r = manager.state.repositories[id]; button(name(r) + (r.enabled ? '' : t(' · Kapalı', ' · Disabled')), 'plugins-repo-' + id, function () { panel.repoId = id; panel.technical = false; show('repository'); }); });
-      if (!Object.keys(manager.state.repositories).length) {
-        var emptyNote = line(t('Henüz eklenmiş depo yok. ', 'No repositories have been added. '));
-        var repositoryHint = document.createElement('strong');
-        repositoryHint.style.fontWeight = 'bold';
-        repositoryHint.textContent = t("GitHub'da depo ara'yı seçin ardından depo ismini yazın. Örnek: Film-Merkezi, Film-Merkezi-Eklentiler gibi.", 'Select Find repositories on GitHub, then enter the repository name. Examples: Film-Merkezi, Film-Merkezi-Eklentiler.');
-        emptyNote.appendChild(repositoryHint);
-      }
-      if (panel.onboarding) button(Object.keys(manager.state.repositories).length ? t('Ana sayfaya devam et', 'Continue to home') : t('Şimdilik atla', 'Skip for now'), 'plugins-setup-done', function () { root.FilmRepositorySetup.complete(catalog); });
-      if (panel.onboarding && root.FilmRepositorySetup.notice) line(t('Kurulum kaydedilemedi; bu oturumda devam edebilirsiniz.', 'Setup could not be saved; you can continue for this session.'));
-    } else if (view === 'find') {
-      line(t('Depo adını veya kullanıcı adını yazın. Örnek: Film-Merkezi', 'Enter a repository name or username. Example: Film-Merkezi'));
-      var query = document.createElement('input'); query.type = 'text'; query.id = 'plugins-search'; query.maxLength = 80; query.value = panel.searchText || ''; query.readOnly = true; query.tabIndex = -1; query.style.cssText = 'box-sizing:border-box;width:100%;font-size:25px;padding:14px;background:#101d30;color:white;border:2px solid #576781'; query.oninput = function () { panel.searchText = query.value; }; box.appendChild(query);
-      button(t('Arama metni · OK ile klavye', 'Search text · OK opens keyboard'), 'plugins-search-edit', function () { panel.inputEditing = true; query.readOnly = false; query.focus(); });
-      button(panel.searchMode === 'user' ? t('Arama: Kullanıcı adı', 'Search: Username') : t('Arama: Depo adı', 'Search: Repository name'), 'plugins-search-mode', function () { panel.searchMode = panel.searchMode === 'user' ? 'repository' : 'user'; delete panel.searchResults; show('find', 'plugins-search-mode'); });
-      function search(page) { delete panel.searchResults; panel.searchText = query.value; work(function () { return manager.search.search(panel.searchText, panel.searchMode, page).then(function (r) { panel.searchResults = r; }); }, 'find', 'plugins-search-run'); }
-      button(t('Ara', 'Search'), 'plugins-search-run', function () { search(1); });
-      if (panel.searchResults) {
-        if (!panel.searchResults.items.length) line(t('Uyumlu depo bulunamadı. Adresi biliyorsanız adresle ekleyebilirsiniz.', 'No matching repositories found. You can still add a known address.'));
-        if (panel.searchResults.incomplete) line(t('GitHub kısmi sonuç döndürdü.', 'GitHub returned partial results.'));
-        panel.searchResults.items.forEach(function (item, i) {
-          button(item.fullName + (item.description ? ' · ' + item.description : ''), 'plugins-found-' + i, function () {
-            panel.replaceId = ''; panel.searchOrigin = true; panel.technical = false;
-            work(function () { return manager.search.address(item).then(function (url) { panel.url = url; return manager.probe(url); }); }, 'trust', 'plugins-trust');
-          });
-        });
-        if (panel.searchResults.page > 1) button(t('Önceki sonuçlar', 'Previous results'), 'plugins-search-previous', function () { search(panel.searchResults.page - 1); });
-        if (panel.searchResults.next) button(t('Sonraki sonuçlar', 'Next results'), 'plugins-search-next', function () { search(panel.searchResults.page + 1); });
-      }
-      back('repositories');
-    } else if (view === 'address') {
-      line(t('filmmerkezi201-repository.json adresi', 'filmmerkezi201-repository.json address'));
+    if (view === 'address') {
+      line(t('filmmerkezi-repository.json adresi', 'filmmerkezi-repository.json address'));
       var input = document.createElement('input'); input.type = 'url'; input.id = 'plugins-url'; input.maxLength = 2048; input.value = panel.url || ''; input.readOnly = true; input.tabIndex = -1; input.style.cssText = 'box-sizing:border-box;width:100%;font-size:25px;padding:14px;background:#101d30;color:white;border:2px solid #576781'; input.oninput = function () { panel.url = input.value; if(panel.settingsParent&&panel.settingsParent.wizard)root.FilmRepositorySetup.checkpoint(3,{url:input.value}); }; box.appendChild(input);
       button(t('Adresi düzenle · OK ile klavye', 'Edit address · OK opens keyboard'), 'plugins-url-edit', function () { panel.inputEditing = true; input.readOnly = false; input.focus(); });
-      button(t('Devam et', 'Continue'), 'plugins-probe', function () { panel.url = input.value; panel.technical = false; work(function () { return manager.probe(panel.url); }, 'trust', 'plugins-trust'); });
+      button(t('Devam et', 'Continue'), 'plugins-probe', function () { panel.url = input.value; panel.technical = false; work(function () { return manager.probe(panel.url).then(function(){return manager.approve(panel.replaceId);}).then(function(id){panel.repoId=id;}); }, 'repository', 'plugins-browse'); });
       back(panel.replaceId ? 'repository' : 'repositories');
     } else if (view === 'rename') {
       var targetRepo = manager.state.repositories[panel.repoId]; if (!targetRepo) { show('repositories'); return; }
@@ -141,46 +120,10 @@
       line(t('Bu yayıncının eklentileri uygulamayla aynı JavaScript yetkileriyle çalışır. Yayıncıyı seçerek güven verirsiniz; Film Merkezi onayı gerekmez.', 'Plugins from this publisher run with the same JavaScript permissions as the app. You choose whom to trust; Film Merkezi approval is not required.'));
       button(panel.replaceId ? t('Adresi kaydet', 'Save address') : t('Ekle', 'Add'), 'plugins-trust', function () { work(function () { return manager.approve(panel.replaceId).then(function (id) { panel.repoId = id; }); }, 'repository', 'plugins-browse'); });
       back(panel.searchOrigin ? 'find' : 'address');
-    } else if (view === 'repository') {
-      var repo = manager.state.repositories[panel.repoId]; if (!repo) { show('repositories'); return; }
-      line(name(repo)); line(repo.url, true); details(repo.fingerprint);
-      if (manager.errors[repo.id]) line(manager.errors[repo.id]);
-      if (manager.keyChanged === repo.id) button(t('Yeni yayıncıyı incele', 'Review new publisher'), 'plugins-review-publisher', function () { panel.replaceId = repo.id; panel.technical = false; work(function () { return manager.probe(repo.url); }, 'trust', 'plugins-trust'); });
-      button(t('Eklentilere gözat', 'Browse plugins'), 'plugins-browse', function () { work(function () { return manager.catalog(repo.id).then(function (index) { panel.index = index; }); }, 'catalog'); });
-      button(t('Güncellemeleri kontrol et', 'Check for updates'), 'plugins-check', function () { work(function () { return manager.checkRepository(repo.id).then(function (index) { panel.index = index; }); }, 'catalog'); });
-      button(repo.enabled ? t('Depoyu devre dışı bırak', 'Disable repository') : t('Depoyu etkinleştir', 'Enable repository'), 'plugins-toggle-repository', function () { work(function () { return manager.setRepositoryEnabled(repo.id, !repo.enabled).then(function () { manager.restartNeeded = true; }); }); });
-      button(t('Depo adresini değiştir', 'Change repository address'), 'plugins-change-address', function () { panel.url = repo.url; panel.replaceId = repo.id; show('address', 'plugins-url-edit'); });
-      button(t('Depo adını değiştir', 'Rename repository'), 'plugins-rename', function () { delete panel.alias; show('rename', 'plugins-name-edit'); });
-      button(t('Depoyu kaldır', 'Remove repository'), 'plugins-remove-repository', function () { panel.confirmAction = 'repository'; show('confirm'); }); back('repositories');
-    } else if (view === 'catalog') {
-      line(name(manager.state.repositories[panel.repoId]));
-      if (!panel.index || !panel.index.plugins.length) line(t('Bu depoda eklenti yok.', 'This repository has no plugins.'));
-      (panel.index ? panel.index.plugins : []).forEach(function (item) { var key = panel.repoId + '/' + item.id, installed = manager.state.plugins[key]; button(item.name + ' · ' + item.version + (installed ? t(' · Kurulu', ' · Installed') : ''), 'plugins-package-' + item.id, function () { panel.item = item; panel.pluginKey = key; panel.installPlan = null; show('plugin'); }); }); back('repository');
-    } else if (view === 'installed') {
-      if (!Object.keys(manager.state.plugins).length) line(t('Henüz kurulu eklenti yok.', 'No plugins are installed.'));
-      Object.keys(manager.state.plugins).forEach(function (key) { var p = manager.state.plugins[key]; button((p.name || p.id) + (p.enabled ? t(' · Etkin', ' · Enabled') : t(' · Kapalı', ' · Disabled')) + (p.error || manager.errors[key] ? ' ⚠' : ''), 'plugins-owned-' + p.id + '-' + p.repoId, function () { panel.pluginKey = key; panel.repoId = p.repoId; panel.item = null; show('plugin'); }); }); back('repositories');
-    } else if (view === 'plugin') {
-      var installed = manager.state.plugins[panel.pluginKey], item = panel.item;
-      line(item ? item.name : installed ? installed.name || installed.id : '');
-      if (item && item.description) line(item.description);
-      if (installed) { line(t('Kurulu: ', 'Installed: ') + (installed.active ? installed.active.version : '—') + (installed.pending ? t(' · Hazır: ', ' · Ready: ') + installed.pending.version : '')); if (installed.error) line(installed.error); if (manager.errors[panel.pluginKey]) line(manager.errors[panel.pluginKey]); }
-      if (panel.installPlan && panel.installPlan.key === panel.pluginKey) {
-        line(t('Birlikte kurulacak paketler:', 'Packages installed together:'));
-        panel.installPlan.rows.forEach(function (c) { line(c.manifest.name + ' ? ' + c.manifest.version + ' ? ' + c.manifest.type); });
-        button(t('Paketleri y?kle', 'Install packages'), 'plugins-install-confirm', function () { work(function () { return manager.download(panel.repoId, item.id).then(function () { panel.installPlan = null; }); }, 'plugin'); });
-      } else if (item) button(t('Kurulumu incele', 'Review installation'), 'plugins-install', function () {
-        work(function () { return manager.operation('plan', function (check) { return manager.installationPlan(panel.repoId, item.id, check).then(function (rows) { panel.installPlan = { key: panel.pluginKey, rows: rows }; }); }); }, 'plugin');
-      });
-      if (installed) {
-        button(installed.enabled ? t('Devre dışı bırak', 'Disable') : t('Etkinleştir', 'Enable'), 'plugins-toggle', function () { work(function () { return manager.toggle(panel.pluginKey, !installed.enabled).then(function () { manager.restartNeeded = true; }); }); });
-        if (installed.previous) button(t('Önceki eklenti sürümüne dön', 'Restore previous plugin version'), 'plugins-rollback', function () { work(function () { return manager.rollback(panel.pluginKey).then(function () { manager.restartNeeded = true; }); }); });
-        button(t('Eklentiyi kaldır', 'Uninstall plugin'), 'plugins-remove', function () { panel.confirmAction = 'plugin'; show('confirm'); });
-      }
-      back(item ? 'catalog' : 'installed');
     } else if (view === 'confirm') {
       if (panel.confirmAction === 'repository') line(t('Bu depodan kurulan bütün eklentiler de kaldırılacak. Listem ve izleme kayıtları silinmez.', 'All plugins installed from this repository will also be removed. My list and viewing records are preserved.'));
       line(t('Kaldırma yeniden açılışta uygulanır. İzleme kayıtları silinmez.', 'Removal takes effect after restart. Viewing records are kept.'));
-      button(t('Kaldır', 'Remove'), 'plugins-confirm-remove', function () { work(function () { return (panel.confirmAction === 'repository' ? manager.removeRepository(panel.repoId) : manager.removePlugin(panel.pluginKey)).then(function () { manager.restartNeeded = true; }); }, panel.confirmAction === 'repository' ? 'repositories' : 'installed'); }); back(panel.confirmAction === 'repository' ? 'repository' : 'plugin');
+      button(t('Kaldır', 'Remove'), 'plugins-confirm-remove', function () { work(function () { return (panel.confirmAction === 'repository' ? manager.removeRepository(panel.repoId) : manager.removePlugin(panel.pluginKey)).then(function () { manager.restartNeeded = true;if(root.ChainApp&&root.ChainApp.siteManagement)root.ChainApp.siteManagement.changed(); }); }, panel.confirmAction === 'repository' ? 'repositories' : 'installed'); }); back(panel.confirmAction === 'repository' ? 'repository' : 'plugin');
     }
     var pending = Object.keys(manager.state.plugins).some(function (key) { return !!manager.state.plugins[key].pending; });
     if (pending || manager.restartNeeded) { line(t('Değişiklikler yeniden açılınca uygulanır.', 'Changes take effect after restart.')); button(t('Uygula ve yeniden aç', 'Apply and restart'), 'plugins-restart', function () { if (manager.busy || manager.core.busy || catalog.app.controller.content) return; if (catalog.hub) catalog.hub.flush(); root.location.reload(); }); }

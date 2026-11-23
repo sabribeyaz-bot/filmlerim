@@ -56,41 +56,45 @@
   try { start().catch(fail); } catch (error) { fail(error); }
 })(window);
 
-/* Film Merkezi (Sabri): auto-adds the sabribeyaz-bot/filmlerim repository and installs P002 on first run. */
+/* Film Merkezi (Sabri): adds the sabribeyaz-bot/filmlerim repositories and installs their plugins once. */
 (function (root) {
   'use strict';
-  var URL = 'https://raw.githubusercontent.com/sabribeyaz-bot/filmlerim/main/filmmerkezi201-repository.json';
-  var FLAG = 'sabri.depo.v1', SETUP = 'filmmerkezi.repository-setup.v1', PLUGIN = 'p002', tries = 0, running = false;
+  var BASE = 'https://raw.githubusercontent.com/sabribeyaz-bot/filmlerim/main/';
+  var REPOS = [
+    { publisher: 'film-merkezi-puhutv', url: BASE + 'filmmerkezi-repository.json', plugins: ['p002'] },
+    { publisher: 'film-merkezi-eklentiler', url: BASE + 'eklentiler/filmmerkezi-repository.json', plugins: ['p003', 'p005'] }
+  ];
+  var FLAG = 'sabri.depo.v2', SETUP = 'filmmerkezi.repository-setup.v1', tries = 0, running = false;
   function get(k) { try { return root.localStorage.getItem(k); } catch (e) { return 'err'; } }
   function set(k, v) { try { root.localStorage.setItem(k, v); } catch (e) {} }
   function log(m) { try { console.log('[sabri-depo] ' + m); } catch (e) {} }
-  function repoId(m) {
+  function serial(list, fn) { return list.reduce(function (p, x) { return p.then(function (acc) { return fn(x).then(function (r) { return acc || r; }); }); }, Promise.resolve(false)); }
+  function findRepo(m, r) {
     var ids = Object.keys(m.state.repositories || {});
-    for (var i = 0; i < ids.length; i++) if (m.state.repositories[ids[i]].url === URL) return ids[i];
+    for (var i = 0; i < ids.length; i++) { var x = m.state.repositories[ids[i]]; if (x.publisherId === r.publisher || x.url === r.url) return ids[i]; }
     return '';
   }
-  function finish(reload) {
-    set(FLAG, 'ok');
-    set(SETUP, JSON.stringify({ version: 1, completed: true, step: 6, repoId: '', query: '', url: '' }));
-    log(reload ? 'P002 installed, reloading' : 'already installed');
-    if (reload) root.location.reload();
+  function installed(m, pid) { return Object.keys(m.state.plugins || {}).some(function (k) { return k.slice(-pid.length - 1) === '/' + pid; }); }
+  function addRepo(m, r) {
+    var id = findRepo(m, r);
+    return (id ? Promise.resolve(id) : m.probe(r.url).then(function () { return m.approve(); })).then(function (repoId) {
+      log('repo ' + r.publisher + ': ' + repoId);
+      return serial(r.plugins, function (pid) {
+        if (installed(m, pid)) return Promise.resolve(false);
+        return m.download(repoId, pid).then(function () { log('installed ' + pid); return true; }, function (e) { log('skip ' + pid + ': ' + (e && e.message)); return false; });
+      });
+    });
   }
   function tick() {
     if (get(FLAG) === 'ok' || get(FLAG) === 'err' || ++tries > 150 || running) return;
     var m = root.FilmPlugins;
     if (!m || !m.state || !m.app || m.busy || m.blocked || !m.core || m.core.busy || (m.app.controller && m.app.controller.content)) { setTimeout(tick, 2000); return; }
     running = true;
-    var existing = repoId(m);
-    var step = existing ? Promise.resolve(existing) : m.probe(URL).then(function () { return m.approve(); });
-    step.then(function (id) {
-      log('repo: ' + id);
-      if (m.state.plugins[id + '/' + PLUGIN]) return false;
-      return m.download(id, PLUGIN).then(function () { return true; });
-    }).then(finish, function (e) {
-      running = false;
-      log('error: ' + (e && e.message));
-      setTimeout(tick, 10000);
-    });
+    serial(REPOS, function (r) { return addRepo(m, r); }).then(function (changed) {
+      set(FLAG, 'ok');
+      set(SETUP, JSON.stringify({ version: 1, completed: true, step: 6, repoId: '', query: '', url: '' }));
+      if (changed) root.location.reload();
+    }, function (e) { running = false; log('error: ' + (e && e.message)); setTimeout(tick, 10000); });
   }
   setTimeout(tick, 5000);
 })(window);
