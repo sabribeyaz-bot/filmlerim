@@ -47,6 +47,7 @@ Mevcut **WGT 2.0.3** üzerinden güncelleyebilirsiniz. [Ayrıntılı sürüm not
 WGT 2.0.3 için depo dosyasının adı [filmmerkezi-repository.json](filmmerkezi-repository.json). Daha eski bir depo adresine kayıtlıysanız [depo kılavuzundaki geçiş adımını](docs/DEPO_EKLEME.md#3-aramayla-bulamazsanız-adres-kullanın) izleyin.
 
 <!-- film-merkezi-repository: filmmerkezi-repository.json -->
+<!-- film-merkezi201-repository: filmmerkezi201-repository.json -->
 
 Uygulamadaki GitHub depo aramasında **Film-Merkezi** aratarak bulunan depoları ekleyebilirsiniz.
 
