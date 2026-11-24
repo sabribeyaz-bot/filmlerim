@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>FORM · Telefon mikrofonu</title>
+<style>
+  :root { --zemin:#0b1220; --panel:#131d31; --cizgi:#2a3a5c; --yazi:#eef2f8; --soluk:#9fb0cc; --vurgu:#ffc43d; --mavi:#4c8dff; --kirmizi:#e5484d; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--zemin); color:var(--yazi); font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  body { display:flex; flex-direction:column; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); gap:14px; }
+  header { display:flex; align-items:center; gap:12px; }
+  .logo { width:40px; height:40px; border-radius:11px; background:var(--vurgu); color:#10182a; font-weight:800; font-size:24px; display:flex; align-items:center; justify-content:center; }
+  h1 { font-size:20px; margin:0; } h1 small { display:block; font-size:13px; color:var(--soluk); font-weight:400; }
+  #baglanti { margin-left:auto; font-size:13px; color:var(--soluk); }
+  #baglanti.iyi::before { content:"● "; color:#30a46c; } #baglanti.kotu::before { content:"● "; color:var(--kirmizi); }
+  #akis { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:4px 0; }
+  .m { max-width:88%; padding:11px 14px; border-radius:16px; font-size:16px; line-height:1.4; white-space:pre-wrap; word-wrap:break-word; }
+  .m.ben { align-self:flex-end; background:#1f4f99; border-bottom-right-radius:4px; }
+  .m.yz { align-self:flex-start; background:var(--panel); border:1px solid var(--cizgi); border-bottom-left-radius:4px; }
+  .bos { color:var(--soluk); text-align:center; margin:auto; font-size:15px; line-height:1.5; padding:0 12px; }
+  #mik { align-self:center; width:150px; height:150px; border-radius:50%; border:none; background:var(--mavi); color:#fff; font-size:17px; font-weight:700; box-shadow:0 8px 30px rgba(76,141,255,.35); touch-action:manipulation; }
+  #mik svg { display:block; margin:0 auto 6px; }
+  #mik.dinliyor { background:var(--kirmizi); box-shadow:0 0 0 0 rgba(229,72,77,.6); animation: nabiz 1.3s infinite; }
+  @keyframes nabiz { 70% { box-shadow:0 0 0 26px rgba(229,72,77,0); } 100% { box-shadow:0 0 0 0 rgba(229,72,77,0); } }
+  #anlik { min-height:22px; text-align:center; color:var(--soluk); font-size:15px; }
+  form { display:flex; gap:8px; }
+  textarea { flex:1; resize:none; height:52px; padding:14px; border-radius:14px; border:1px solid var(--cizgi); background:var(--panel); color:var(--yazi); font:inherit; font-size:16px; }
+  button.gonder { padding:0 18px; border-radius:14px; border:none; background:var(--mavi); color:#fff; font-size:16px; font-weight:700; }
+  .uyari { background:#3a1d22; border:1px solid var(--kirmizi); color:#ffd4d4; padding:12px; border-radius:12px; font-size:14px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">F</div>
+    <h1>FORM <small>Telefonla TV'ye konuş</small></h1>
+    <span id="baglanti">Bağlanıyor…</span>
+  </header>
+
+  <div id="akis"><p class="bos" id="bos">Mavi düğmeye bas ve sorunu söyle.<br>Soru TV'deki FORM'a gider, yanıt hem TV'de hem burada görünür ve TV'de sesli okunur.</p></div>
+
+  <div id="anlik"></div>
+  <button id="mik" type="button" aria-label="Konuşmaya başla">
+    <svg width="38" height="38" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+    <span id="mik-yazi">Konuş</span>
+  </button>
+
+  <form id="form">
+    <textarea id="metin" placeholder="ya da buraya yaz…" rows="1"></textarea>
+    <button class="gonder" type="submit">Gönder</button>
+  </form>
+
+<script>
+(function () {
+  'use strict';
+  var kanal = (location.hash || '').replace('#', '').trim();
+  var akis = document.getElementById('akis'), bos = document.getElementById('bos');
+  var baglanti = document.getElementById('baglanti'), anlik = document.getElementById('anlik');
+  var mik = document.getElementById('mik'), mikYazi = document.getElementById('mik-yazi');
+  var metin = document.getElementById('metin');
+  var NTFY = 'https://ntfy.sh/';
+
+  function uyari(t) { var d = document.createElement('div'); d.className = 'uyari'; d.textContent = t; akis.appendChild(d); bos && bos.remove(); }
+  function balon(sinif, t) {
+    if (bos) { bos.remove(); bos = null; }
+    var d = document.createElement('div'); d.className = 'm ' + sinif; d.textContent = t; akis.appendChild(d);
+    akis.scrollTop = akis.scrollHeight; return d;
+  }
+
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(kanal)) {
+    baglanti.textContent = 'Kanal yok'; baglanti.className = 'kotu';
+    uyari('Bu sayfayı TV\'deki FORM uygulamasının gösterdiği QR kodu okutarak aç. (Adresin sonunda # ile başlayan kanal kodu olmalı.)');
+    mik.disabled = true; return;
+  }
+
+  /* TV'den gelen yanıtları dinle */
+  function dinle() {
+    var es = new EventSource(NTFY + kanal + '-yanit/sse');
+    es.onopen = function () { baglanti.textContent = 'TV\'ye bağlı'; baglanti.className = 'iyi'; };
+    es.onerror = function () { baglanti.textContent = 'Bağlantı koptu, tekrar deneniyor'; baglanti.className = 'kotu'; };
+    es.onmessage = function (e) {
+      try { var j = JSON.parse(e.data); if (j.event === 'message' && j.message) balon('yz', j.message); } catch (x) {}
+    };
+  }
+  dinle();
+
+  function gonder(t) {
+    t = (t || '').trim(); if (!t) return;
+    var b = balon('ben', t);
+    fetch(NTFY + kanal + '-soru', { method: 'POST', body: t })
+      .then(function (y) { if (!y.ok) throw new Error(y.status); })
+      .catch(function (e) { b.style.opacity = .5; uyari('Gönderilemedi (' + e.message + '). İnternet bağlantını kontrol et.'); });
+  }
+
+  document.getElementById('form').addEventListener('submit', function (e) { e.preventDefault(); gonder(metin.value); metin.value = ''; });
+  metin.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); gonder(metin.value); metin.value = ''; } });
+
+  /* Telefonun konuşma tanıma özelliği (Chrome / Safari) */
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    mikYazi.textContent = 'Desteklenmiyor'; mik.disabled = true; mik.style.opacity = .5;
+    anlik.textContent = 'Bu tarayıcı sesle yazmayı desteklemiyor. Chrome ile aç ya da klavyedeki mikrofonu kullan.';
+    return;
+  }
+  var tanima = null, dinliyor = false, son = '';
+  function basla() {
+    tanima = new SR();
+    tanima.lang = 'tr-TR'; tanima.interimResults = true; tanima.continuous = false; tanima.maxAlternatives = 1;
+    son = '';
+    tanima.onresult = function (e) {
+      var ara = '', kesin = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) kesin += e.results[i][0].transcript; else ara += e.results[i][0].transcript;
+      }
+      if (kesin) son += kesin;
+      anlik.textContent = (son + ' ' + ara).trim();
+    };
+    tanima.onerror = function (e) {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') anlik.textContent = 'Mikrofon izni verilmedi. Tarayıcı ayarlarından izin ver.';
+      else if (e.error === 'no-speech') anlik.textContent = 'Ses algılanmadı, tekrar dene.';
+      else anlik.textContent = 'Ses tanıma hatası: ' + e.error;
+    };
+    tanima.onend = function () {
+      dinliyor = false; mik.classList.remove('dinliyor'); mikYazi.textContent = 'Konuş';
+      var t = (son || anlik.textContent || '').trim();
+      if (son.trim()) { anlik.textContent = ''; gonder(t); }
+    };
+    tanima.start();
+    dinliyor = true; mik.classList.add('dinliyor'); mikYazi.textContent = 'Dinliyorum…'; anlik.textContent = '';
+  }
+  mik.addEventListener('click', function () {
+    if (dinliyor) { try { tanima.stop(); } catch (e) {} return; }
+    try { basla(); } catch (e) { anlik.textContent = 'Mikrofon açılamadı: ' + e.message; }
+  });
+})();
+</script>
+</body>
+</html>
